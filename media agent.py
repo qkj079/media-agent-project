@@ -1,6 +1,7 @@
 import streamlit as st
 from langchain_openai import ChatOpenAI
-from langchain.agents import initialize_agent, Tool
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain_core.tools import Tool
 from langchain.memory import ConversationBufferMemory
 import requests 
 
