@@ -16,9 +16,6 @@ pip install -r requirements.txt
 在终端输入以下命令启动：
 streamlit run media_agent.py
 关于作者
-角色
-名称
-备注
 项目负责人
 田笑笑
 全栈开发与架构设计
