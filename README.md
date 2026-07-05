@@ -1,5 +1,5 @@
 传媒智囊团 AI (Media Agent Project)
-基于 Streamlit 与 LangChain 的智能媒体助手，具备对话记忆、热点搜索与爆款文案生成能力。
+基于 Streamlit 与 LangChain 的智能媒体助手，具备对话记忆、热点搜索与爆款文案生成能力
 核心功能
 1 智能对话记忆：集成 LangChain Memory，支持多轮上下文流畅对话。
 2 模拟热点搜索：内置 MediaSearch 工具，模拟检索微博、知乎、抖音等平台的实时趋势。
