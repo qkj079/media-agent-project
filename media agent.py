@@ -1,20 +1,31 @@
 import streamlit as st
 import os
 
-# --- 尝试导入 LangChain 组件 ---
-# 增加了一个 try-except 块，防止因为版本问题直接白屏或报错
+# 1. 【关键修改】页面配置必须放在最前面！
+st.set_page_config(page_title="传媒专业智能助手", page_icon="📺")
+
+# 2. 尝试导入 LangChain
+# 注意：如果这里报错，我们需要确保页面能渲染出错误信息，而不是直接崩掉
 try:
+    # 建议加上对 langchain_core 的导入测试，因为新版依赖这个
     from langchain_community.llms import SparkLLM
     from langchain.chains import ConversationChain
     from langchain.memory import ConversationBufferMemory
-except ImportError:
-    st.error("⚠️ 缺少必要的库！请在 requirements.txt 中添加 'langchain-community' 并重新部署。")
-    st.stop()
+    LIBS_LOADED = True
+except ImportError as e:
+    LIBS_LOADED = False
+    IMPORT_ERROR_MSG = str(e)
 
-# --- 页面配置 ---
-st.set_page_config(page_title="传媒专业智能助手", page_icon="📺")
+# --- 页面标题与配置 ---
 st.title("📺 传媒专业智能助手")
 st.caption("具备记忆功能、联网搜索与爆款文案生成能力的智能体（讯飞星火版）")
+
+# 检查库是否加载成功
+if not LIBS_LOADED:
+    st.error(f"⚠️ 环境配置错误：缺少必要的库！")
+    st.code(f"错误详情: {IMPORT_ERROR_MSG}")
+    st.info("请在 GitHub 仓库根目录创建 requirements.txt 文件，并填入以下内容：\nlangchain\nlangchain-community\nstreamlit")
+    st.stop() # 停止运行后续代码
 
 # --- 初始化 Session State ---
 if "messages" not in st.session_state:
@@ -28,7 +39,6 @@ if "memory" not in st.session_state:
 with st.sidebar:
     st.header("⚙️ 配置中心")
     
-    # 输入框：获取讯飞星火的三个关键参数
     app_id = st.text_input("APPID", type="password", placeholder="请输入讯飞 APPID")
     api_key = st.text_input("APIKey", type="password", placeholder="请输入讯飞 APIKey")
     api_secret = st.text_input("APISecret", type="password", placeholder="请输入讯飞 APISecret")
@@ -43,14 +53,12 @@ with st.sidebar:
     if st.button("💾 保存并连接"):
         if app_id and api_key and api_secret:
             try:
-                # 初始化讯飞星火 LLM
                 st.session_state.llm = SparkLLM(
                     spark_app_id=app_id,
                     spark_api_key=api_key,
                     spark_api_secret=api_secret,
                     model=model_version 
                 )
-                # 重置对话链和记忆
                 st.session_state.memory = ConversationBufferMemory()
                 st.success(f"✅ 成功连接讯飞星火 ({model_version})！")
             except Exception as e:
@@ -59,42 +67,33 @@ with st.sidebar:
             st.warning("⚠️ 请填写完整的 APPID、APIKey 和 APISecret")
 
 # --- 主聊天区域 ---
-
-# 显示历史消息
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# 处理用户输入
 if prompt := st.chat_input("请输入你的传媒相关问题或文案需求..."):
-    # 1. 检查模型是否已加载
     if not st.session_state.llm:
         st.error("🔴 请先在左侧侧边栏配置讯飞星火 API 信息并点击连接！")
         st.stop()
 
-    # 2. 显示用户消息
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 3. 调用 AI 生成回复
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
         
         try:
-            # 使用 ConversationChain 处理带记忆的对话
             conversation = ConversationChain(
                 llm=st.session_state.llm,
                 memory=st.session_state.memory,
                 verbose=False 
             )
             
-            # 获取回复
             response = conversation.predict(input=prompt)
             full_response = response
             
-            # 打字机效果显示
             message_placeholder.markdown(full_response + "▌")
             message_placeholder.markdown(full_response)
             
@@ -102,5 +101,4 @@ if prompt := st.chat_input("请输入你的传媒相关问题或文案需求..."
             st.error(f"生成出错: {str(e)}")
             full_response = "抱歉，我遇到了一点问题，请检查 API 配置或网络连接。"
 
-    # 4. 保存 AI 回复到历史
     st.session_state.messages.append({"role": "assistant", "content": full_response})
