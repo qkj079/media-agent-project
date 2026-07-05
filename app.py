@@ -1,20 +1,22 @@
 import streamlit as st
-# 尝试导入 SparkLLM，兼容不同版本的 langchain
+import os
+
+# --- 尝试导入 LangChain 组件 ---
+# 增加了一个 try-except 块，防止因为版本问题直接白屏或报错
 try:
     from langchain_community.llms import SparkLLM
+    from langchain.chains import ConversationChain
+    from langchain.memory import ConversationBufferMemory
 except ImportError:
-    from langchain.llms import SparkLLM
-
-from langchain.chains import ConversationChain
-from langchain.memory import ConversationBufferMemory
-import os
+    st.error("⚠️ 缺少必要的库！请在 requirements.txt 中添加 'langchain-community' 并重新部署。")
+    st.stop()
 
 # --- 页面配置 ---
 st.set_page_config(page_title="传媒专业智能助手", page_icon="📺")
 st.title("📺 传媒专业智能助手")
 st.caption("具备记忆功能、联网搜索与爆款文案生成能力的智能体（讯飞星火版）")
 
-# --- 初始化 Session State (防止刷新后变量丢失) ---
+# --- 初始化 Session State ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "llm" not in st.session_state:
