@@ -9,3 +9,5 @@ streamlit
 langchain
 langchain-community
 spark-ai-python
+streamlit
+websocket-client
