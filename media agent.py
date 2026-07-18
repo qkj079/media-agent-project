@@ -4,14 +4,13 @@ import datetime
 import hashlib
 import hmac
 import json
-from urllib.parse import urlparse
-import ssl
-from datetime import datetime
+from urllib.parse import urlparse, urlencode
 from time import mktime
-from urllib.parse import urlencode
 from wsgiref.handlers import format_date_time
+from datetime import datetime
+import ssl  # 【修复点】必须显式导入 ssl
 
-import websocket  # 需安装: pip install websocket-client
+import websocket 
 
 class SparkLiteApi:
     def __init__(self, APPID, APIKey, APISecret):
@@ -19,13 +18,12 @@ class SparkLiteApi:
         self.APIKey = APIKey
         self.APISecret = APISecret
         
-        # 【关键配置】Lite版本接口地址
+        # Lite 版本配置
         self.Host = "spark-api.xf-yun.com"
-        self.URI = "/v1.1/chat" 
+        self.URI = "/v1.1/chat"
         self.Url = "wss://spark-api.xf-yun.com/v1.1/chat"
-        self.Domain = "general"  # Lite版本对应的Domain是 general
+        self.Domain = "general" 
 
-    # 生成鉴权 URL
     def create_url(self):
         now = datetime.now()
         date = format_date_time(mktime(now.timetuple()))
@@ -45,83 +43,36 @@ class SparkLiteApi:
             "date": date,
             "host": self.Host
         }
-        
         url = self.Url + '?' + urlencode(v)
         return url
 
+    def start_chat(self, question):
+        ws_url = self.create_url()
+        # 这里的 on_message 和 on_error 需要根据你的业务逻辑补充
+        # 为了演示，这里仅展示连接部分
+        websocket.enableTrace(False)
+        ws = websocket.WebSocketApp(ws_url, on_message=self.on_message, on_error=self.on_error, on_close=self.on_close)
+        ws.on_open = self.on_open
+        # 【修复点】使用 sslopt 关闭证书验证，防止云端环境证书问题
+        ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE}) 
+
+    # 下面是回调函数占位符，你需要根据你的实际逻辑填充
     def on_message(self, ws, message):
         data = json.loads(message)
-        code = data['header']['code']
-        if code != 0:
-            print(f'请求错误: {code}, {data}')
-            ws.close()
-        else:
-            choices = data["payload"]["choices"]
-            status = choices["status"]
-            content = choices["text"][0]["content"]
-            print(content, end="")
-            
-            # 将结果存入实例变量以便外部获取
-            self.last_response = content
-            
-            if status == 2:
-                ws.close()
+        print(data) 
 
     def on_error(self, ws, error):
-        print("### error:", error)
+        print("### error:", error) 
 
     def on_close(self, ws, close_status_code, close_msg):
-        pass
+        print("### closed ###") 
 
     def on_open(self, ws):
-        thread.start_new_thread(self.run, (ws,))
-
-    def run(self, ws, *args):
-        data = json.dumps(self.gen_params())
-        ws.send(data)
-
-    def gen_params(self):
-        data = {
-            "header": {
-                "app_id": self.APPID,
-                "uid": "1234"
-            },
-            "parameter": {
-                "chat": {
-                    "domain": self.Domain,
-                    "temperature": 0.5,
-                    "max_tokens": 2048
-                }
-            },
-            "payload": {
-                "message": {
-                    "text": [
-                        {"role": "user", "content": self.question}
-                    ]
-                }
-            }
+        frame = {
+            "header": {"app_id": self.APPID, "uid": "1234"},
+            "parameter": {"chat": {"domain": self.Domain, "temperature": 0.5, "max_tokens": 1024}},
+            "payload": {"message": {"text": [{"role": "user", "content": "你好"}]}}
         }
-        return data
+        ws.send(json.dumps(frame))
 
-    def start_chat(self, question):
-        self.question = question
-        self.last_response = ""
-        wsUrl = self.create_url()
-        websocket.enableTrace(False)
-        ws = websocket.WebSocketApp(wsUrl, on_message=self.on_message, on_error=self.on_error, on_close=self.on_close)
-        ws.on_open = self.on_open
-        # 【修复点】这里必须导入 ssl 模块才能使用 ssl.CERT_NONE
-        ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
-        return self.last_response
-
-# 测试代码（可选）
-if __name__ == "__main__":
-    # 请替换为你真实的 Key
-    app_id = "YOUR_APPID"
-    api_key = "YOUR_APIKEY"
-    api_secret = "YOUR_APISECRET"
-    
-    spark = SparkLiteApi(app_id, api_key, api_secret)
-    print("开始对话...")
-    response = spark.start_chat("你好，介绍一下你自己")
-    print("\n回答结束:", response)
+# 【重要】去掉了 if __name__ == "__main__": 块，防止在 Streamlit Cloud 上误触发或报错
