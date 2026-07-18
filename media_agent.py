@@ -1,4 +1,3 @@
-# media_agent.py
 import _thread as thread
 import base64
 import datetime
@@ -13,50 +12,92 @@ from urllib.parse import urlencode
 from wsgiref.handlers import format_date_time
 import websocket
 
+# 配置你的密钥 (建议从环境变量获取，这里为了演示直接写死，或者你自己在代码里填)
+# 注意：如果在Streamlit云端部署，最好用 st.secrets，但为了先跑通，你可以先填在这里
+APPID = "你的APPID" 
+APIKey = "你的APIKey" 
+APISecret = "你的APISecret" 
+
 class SparkLiteApi:
-    def __init__(self, app_id, api_key, api_secret):
-        self.app_id = app_id
+    def __init__(self, appid, api_key, api_secret):
+        self.appid = appid
         self.api_key = api_key
         self.api_secret = api_secret
         self.answer = ""
 
-    # ...这里省略掉那些复杂的加密签名函数(get_url, create_header等)，保持你原有的即可...
-    # 只要你原来的代码里有 get_url 和 on_message 逻辑就行。
-
-    # 【关键】必须添加或修改这个 chat 方法
-    def chat(self, question):
-        self.answer = "" # 清空上一次回答
-        wsUrl = self.get_url() # 假设你原来有获取URL的方法
+    # 1. 这里是报错缺失的 get_url 函数
+    def get_url(self):
+        host = "spark-api.xf-yun.com"
+        url = "wss://{}/v1.1/chat".format(host)
         
-        # 启动 WebSocket 连接
-        thread.start_new_thread(self.run, (wsUrl, question))
+        now = datetime.now()
+        date = format_date_time(mktime(now.timetuple()))
         
-        # 简单等待一下结果返回（实际生产环境建议用回调，这里为了简单演示）
-        import time
-        while not self.answer and len(self.answer) == 0:
-             time.sleep(0.1)
-             # 注意：这里需要配合 on_message 把结果存进 self.answer
-        return self.answer 
+        signature_origin = "host: {}\ndate: {}\nGET /v1.1/chat HTTP/1.1".format(host, date)
+        signature_sha = hmac.new(self.api_secret.encode('utf-8'), signature_origin.encode('utf-8'), digestmod=hashlib.sha256).digest()
+        signature_sha_base64 = base64.b64encode(signature_sha).decode(encoding='utf-8')
+        
+        authorization_origin = "api_key=\"{}\", algorithm=\"hmac-sha256\", headers=\"host date request-line\", signature=\"{}\"".format(
+            self.api_key, signature_sha_base64)
+        authorization = base64.b64encode(authorization_origin.encode('utf-8')).decode(encoding='utf-8')
+        
+        v = {"authorization": authorization, "date": date, "host": host}
+        url = url + '?' + urlencode(v)
+        return url
 
-    def run(self, wsUrl, question):
-        # 这里是你原来的 WebSocket 连接逻辑
+    # 2. 这里是核心对话逻辑
+    def chat(self, prompt):
+        self.answer = ""
+        wsUrl = self.get_url()
+        
         websocket.enableTrace(False)
         ws = websocket.WebSocketApp(wsUrl, on_message=self.on_message, on_error=self.on_error, on_close=self.on_close)
-        ws.on_open = lambda ws: self.on_open(ws, question)
+        ws.on_open = self.on_open
         ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+        return self.answer
 
+    # --- 以下是 WebSocket 的回调函数，不需要改动 ---
     def on_message(self, ws, message):
         data = json.loads(message)
         code = data['header']['code']
         if code != 0:
-            self.answer = f"错误: {code}"
+            print(f'请求错误: {code}, {data}')
             ws.close()
         else:
-            choices = data["payload"]["choices"]["text"]
-            for choice in choices:
-                self.answer += choice["content"]
-            # 如果是最后一段，可以关闭连接
-            if data["header"]["status"] == 2:
+            choices = data["payload"]["choices"]
+            status = choices["status"]
+            content = choices["text"][0]["content"]
+            self.answer += content
+            if status == 2:
                 ws.close()
 
-    # ... 其他 on_error, on_close, on_open, get_url 等辅助函数保持原样 ...
+    def on_error(self, ws, error):
+        print("### error:", error)
+
+    def on_close(self, ws, close_status_code, close_msg):
+        pass
+
+    def on_open(self, ws):
+        gen_params = {
+            "header": {
+                "app_id": self.appid,
+                "uid": "1234"
+            },
+            "parameter": {
+                "chat": {
+                    "domain": "general", # Lite版本通常用 general
+                    "temperature": 0.5,
+                    "max_tokens": 1024
+                }
+            },
+            "payload": {
+                "message": {
+                    "text": [
+                        {"role": "user", "content": "你好"} # 这里只是占位，实际应该传入 prompt
+                    ]
+                }
+            }
+        }
+        # 修正：把传入的 prompt 放进去
+        gen_params["payload"]["message"]["text"] = [{"role": "user", "content": self.current_prompt}]
+        ws.send(json.dumps(gen_params))
