@@ -1,78 +1,49 @@
-import _thread as thread
-import base64
-import datetime
-import hashlib
-import hmac
-import json
-from urllib.parse import urlparse, urlencode
-from time import mktime
-from wsgiref.handlers import format_date_time
-from datetime import datetime
-import ssl  # 【修复点】必须显式导入 ssl
+import streamlit as st
+from media_agent import SparkLiteApi  # 导入你之前写好的工具类
 
-import websocket 
+# --- 1. 页面设置 ---
+st.set_page_config(page_title="传媒专业智能助手", page_icon="🎓")
+st.title("🎓 传媒专业智能助手")
+st.caption("基于讯飞星火 Lite 模型 | 安全密钥已连接")
 
-class SparkLiteApi:
-    def __init__(self, APPID, APIKey, APISecret):
-        self.APPID = APPID
-        self.APIKey = APIKey
-        self.APISecret = APISecret
+# --- 2. 初始化 API (从 Secrets 读取密钥) ---
+if "spark_api" not in st.session_state:
+    try:
+        # 这里会自动读取你在网页 Secrets 里填的那三个值
+        app_id = st.secrets["SPARK_APP_ID"]
+        api_key = st.secrets["SPARK_API_KEY"]
+        api_secret = st.secrets["SPARK_API_SECRET"]
         
-        # Lite 版本配置
-        self.Host = "spark-api.xf-yun.com"
-        self.URI = "/v1.1/chat"
-        self.Url = "wss://spark-api.xf-yun.com/v1.1/chat"
-        self.Domain = "general" 
+        # 创建 API 对象
+        st.session_state.spark_api = SparkLiteApi(app_id, api_key, api_secret)
+        st.success("✅ 系统初始化成功，可以开始提问了！")
+    except Exception as e:
+        st.error(f"❌ 初始化失败，请检查 Secrets 配置: {e}")
 
-    def create_url(self):
-        now = datetime.now()
-        date = format_date_time(mktime(now.timetuple()))
+# --- 3. 聊天界面逻辑 ---
+# 显示历史消息
+for message in st.session_state.get("messages", []):
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# 处理用户输入
+if prompt := st.chat_input("请输入你想问的问题..."):
+    # 显示用户消息
+    st.chat_message("user").markdown(prompt)
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    
+    # 调用 AI 回答
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        full_response = ""
         
-        signature_origin = "host: " + self.Host + "\n"
-        signature_origin += "date: " + date + "\n"
-        signature_origin += "GET " + self.URI + " HTTP/1.1"
-        
-        signature_sha = hmac.new(self.APISecret.encode('utf-8'), signature_origin.encode('utf-8'), digestmod=hashlib.sha256).digest()
-        signature_sha_base64 = base64.b64encode(signature_sha).decode(encoding='utf-8')
-        
-        authorization_origin = f'api_key="{self.APIKey}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature_sha_base64}"'
-        authorization = base64.b64encode(authorization_origin.encode('utf-8')).decode(encoding='utf-8')
-        
-        v = {
-            "authorization": authorization,
-            "date": date,
-            "host": self.Host
-        }
-        url = self.Url + '?' + urlencode(v)
-        return url
-
-    def start_chat(self, question):
-        ws_url = self.create_url()
-        # 这里的 on_message 和 on_error 需要根据你的业务逻辑补充
-        # 为了演示，这里仅展示连接部分
-        websocket.enableTrace(False)
-        ws = websocket.WebSocketApp(ws_url, on_message=self.on_message, on_error=self.on_error, on_close=self.on_close)
-        ws.on_open = self.on_open
-        # 【修复点】使用 sslopt 关闭证书验证，防止云端环境证书问题
-        ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE}) 
-
-    # 下面是回调函数占位符，你需要根据你的实际逻辑填充
-    def on_message(self, ws, message):
-        data = json.loads(message)
-        print(data) 
-
-    def on_error(self, ws, error):
-        print("### error:", error) 
-
-    def on_close(self, ws, close_status_code, close_msg):
-        print("### closed ###") 
-
-    def on_open(self, ws):
-        frame = {
-            "header": {"app_id": self.APPID, "uid": "1234"},
-            "parameter": {"chat": {"domain": self.Domain, "temperature": 0.5, "max_tokens": 1024}},
-            "payload": {"message": {"text": [{"role": "user", "content": "你好"}]}}
-        }
-        ws.send(json.dumps(frame))
-
-# 【重要】去掉了 if __name__ == "__main__": 块，防止在 Streamlit Cloud 上误触发或报错
+        # 获取回答 (假设你的 media_agent.py 里有 get_response 方法)
+        # 如果之前的代码里方法名不一样，请在这里修改
+        try:
+            response = st.session_state.spark_api.get_response(prompt)
+            full_response = str(response) # 确保是字符串
+            
+            message_placeholder.markdown(full_response)
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+        except Exception as e:
+            st.error(f"出错了: {e}")
