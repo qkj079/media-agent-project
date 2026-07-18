@@ -1,99 +1,120 @@
 import streamlit as st
-import os
+import _thread as thread
+import base64
+import datetime
+import hashlib
+import hmac
+import json
+from urllib.parse import urlparse, urlencode
+from wsgiref.handlers import format_date_time
+from datetime import datetime
+from time import mktime
+import websocket
 
-# 1. 页面配置必须放在最前面
+# --- 页面配置 ---
 st.set_page_config(page_title="传媒专业智能助手", page_icon="📺")
-
-# 2. 尝试导入 LangChain
-try:
-    from langchain_community.llms import SparkLLM
-    from langchain.chains import ConversationChain
-    from langchain.memory import ConversationBufferMemory
-    LIBS_LOADED = True
-except ImportError as e:
-    LIBS_LOADED = False
-    IMPORT_ERROR_MSG = str(e)
-
-# --- 页面标题与配置 ---
 st.title("📺 传媒专业智能助手")
-st.caption("具备记忆功能、联网搜索与爆款文案生成能力的智能体（讯飞星火版）")
+st.caption("基于讯飞星火原生 SDK 构建，修复鉴权问题")
 
-# 检查库是否加载成功
-if not LIBS_LOADED:
-    st.error("⚠️ 环境配置错误：缺少必要的库！")
-    st.code(f"错误详情: {IMPORT_ERROR_MSG}")
-    st.info("请在终端运行以下命令安装依赖：\npip install langchain langchain-community streamlit")
-    st.stop()
+# --- 侧边栏配置 ---
+with st.sidebar:
+    st.header("⚙️ API 配置")
+    app_id = st.text_input("APPID", type="password", value=st.session_state.get("app_id", ""))
+    api_key = st.text_input("APIKey", type="password", value=st.session_state.get("api_key", ""))
+    api_secret = st.text_input("APISecret", type="password", value=st.session_state.get("api_secret", ""))
+    
+    # 模型选择映射
+    model_map = {
+        "Spark Lite (免费/快)": {"domain": "general", "url": "wss://spark-api.xf-yun.com/v1.1/chat"},
+        "Spark Pro (均衡)": {"domain": "generalv3", "url": "wss://spark-api.xf-yun.com/v3.1/chat"},
+        "Spark Max (最强)": {"domain": "generalv3.5", "url": "wss://spark-api.xf-yun.com/v3.5/chat"},
+    }
+    selected_model_label = st.selectbox("选择模型", list(model_map.keys()))
+    selected_model = model_map[selected_model_label]
 
-# --- Domain 与 URL 映射表 ---
-MODEL_CONFIG = {
-    "generalv3.5": {
-        "label": "Spark Max（效果最好，稍慢）",
-        "url": "wss://spark-api.xf-yun.com/v3.5/chat",
-    },
-    "generalv3": {
-        "label": "Spark Pro（均衡）",
-        "url": "wss://spark-api.xf-yun.com/v3.1/chat",
-    },
-    "general": {
-        "label": "Spark Lite（速度最快，免费）",
-        "url": "wss://spark-api.xf-yun.com/v1.1/chat",
-    },
-}
+    if st.button("💾 保存并测试连接"):
+        if app_id and api_key and api_secret:
+            st.session_state.app_id = app_id
+            st.session_state.api_key = api_key
+            st.session_state.api_secret = api_secret
+            st.session_state.model_config = selected_model
+            st.success("✅ 配置已保存！")
+        else:
+            st.error("❌ 请填写完整信息")
 
-# --- 初始化 Session State ---
+# --- 核心 WebSocket 类 (修复鉴权的关键) ---
+class WsParam:
+    def __init__(self, app_id, api_key, api_secret, spark_url, domain):
+        self.app_id = app_id
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.spark_url = spark_url
+        self.domain = domain
+        self.host = urlparse(self.spark_url).netloc
+        self.path = urlparse(self.spark_url).path
+
+    def create_url(self):
+        now = datetime.now()
+        date = format_date_time(mktime(now.timetuple()))
+        signature_origin = "host: " + self.host + "\n"
+        signature_origin += "date: " + date + "\n"
+        signature_origin += "GET " + self.path + " HTTP/1.1"
+        signature_sha = hmac.new(self.api_secret.encode('utf-8'), signature_origin.encode('utf-8'), digestmod=hashlib.sha256).digest()
+        signature_sha_base64 = base64.b64encode(signature_sha).decode(encoding='utf-8')
+        authorization_origin = f'api_key="{self.api_key}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature_sha_base64}"'
+        authorization = base64.b64encode(authorization_origin.encode('utf-8')).decode(encoding='utf-8')
+        v = {"authorization": authorization, "date": date, "host": self.host}
+        url = self.spark_url + '?' + urlencode(v)
+        return url
+
+# --- 聊天逻辑 ---
+def on_message(ws, message):
+    data = json.loads(message)
+    code = data['header']['code']
+    if code != 0:
+        st.session_state.response_error = f"错误代码: {code}, 原因: {data['header']['message']}"
+        ws.close()
+    else:
+        choices = data["payload"]["choices"]
+        status = choices[0]["status"]
+        content = choices[0]["content"]["text"]
+        st.session_state.current_response += content
+        
+        if status == 2:
+            ws.close()
+
+def on_error(ws, error):
+    st.session_state.response_error = str(error)
+
+def on_close(ws, close_status_code, close_msg):
+    pass
+
+def on_open(ws):
+    thread.start_new_thread(run, (ws,))
+
+def run(ws, *args):
+    config = st.session_state.get("model_config")
+    if not config: return
+    
+    data = json.dumps({
+        "header": {"app_id": st.session_state.app_id, "uid": "1234"},
+        "parameter": {"chat": {"domain": config["domain"], "temperature": 0.5, "max_tokens": 2048}},
+        "payload": {"message": {"text": [{"role": "user", "content": st.session_state.user_prompt}]}}
+    })
+    ws.send(data)
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "llm" not in st.session_state:
-    st.session_state.llm = None
-if "memory" not in st.session_state:
-    st.session_state.memory = ConversationBufferMemory()
 
-# --- 侧边栏：API Key 设置 ---
-with st.sidebar:
-    st.header("⚙️ 配置中心")
-
-    app_id = st.text_input("APPID", type="password", placeholder="请输入讯飞 APPID")
-    api_key = st.text_input("APIKey", type="password", placeholder="请输入讯飞 APIKey")
-    api_secret = st.text_input("APISecret", type="password", placeholder="请输入讯飞 APISecret")
-
-    # 下拉菜单：显示友好名称，返回 domain 值
-    model_domain = st.selectbox(
-        "选择模型版本",
-        options=list(MODEL_CONFIG.keys()),
-        format_func=lambda x: MODEL_CONFIG[x]["label"],
-        index=0,
-        help="Max效果最好但稍慢，Lite速度最快且免费"
-    )
-
-    if st.button("💾 保存并连接"):
-        if app_id and api_key and api_secret:
-            try:
-                # 根据选择的 domain 获取对应的 URL
-                api_url = MODEL_CONFIG[model_domain]["url"]
-
-                st.session_state.llm = SparkLLM(
-                    spark_app_id=app_id,
-                    spark_api_key=api_key,
-                    spark_api_secret=api_secret,
-                    spark_api_url=api_url,
-                    spark_llm_domain=model_domain,
-                )
-                st.session_state.memory = ConversationBufferMemory()
-                st.success(f"✅ 成功连接讯飞星火（{MODEL_CONFIG[model_domain]['label']}）！")
-            except Exception as e:
-                st.error(f"❌ 连接失败: {str(e)}")
-        else:
-            st.warning("⚠️ 请填写完整的 APPID、APIKey 和 APISecret")
-
-# --- 主聊天区域 ---
+# 显示历史消息
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("请输入你的传媒相关问题或文案需求..."):
-    if not st.session_state.llm:
-        st.error("🔴 请先在左侧侧边栏配置讯飞星火 API 信息并点击「保存并连接」！")
+# 输入框
+if prompt := st.chat_input("请输入你的问题..."):
+    if not st.session_state.get("app_id"):
+        st.error("请先在左侧配置 API 信息！")
         st.stop()
 
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -102,23 +123,29 @@ if prompt := st.chat_input("请输入你的传媒相关问题或文案需求..."
 
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
-        full_response = ""
+        st.session_state.current_response = ""
+        st.session_state.response_error = None
+        st.session_state.user_prompt = prompt
 
         try:
-            conversation = ConversationChain(
-                llm=st.session_state.llm,
-                memory=st.session_state.memory,
-                verbose=False,
+            ws_param = WsParam(
+                app_id=st.session_state.app_id,
+                api_key=st.session_state.api_key,
+                api_secret=st.session_state.api_secret,
+                spark_url=st.session_state.model_config["url"],
+                domain=st.session_state.model_config["domain"]
             )
+            websocket.enableTrace(False)
+            ws_url = ws_param.create_url()
+            ws = websocket.WebSocketApp(ws_url, on_message=on_message, on_error=on_error, on_close=on_close)
+            ws.on_open = on_open
+            ws.run_forever(sslopt={"cert_reqs": websocket.ssl.CERT_NONE})
 
-            response = conversation.predict(input=prompt)
-            full_response = response
-
-            message_placeholder.markdown(full_response + "▌")
-            message_placeholder.markdown(full_response)
+            if st.session_state.response_error:
+                st.error(f"生成出错: {st.session_state.response_error}")
+            else:
+                message_placeholder.markdown(st.session_state.current_response)
+                st.session_state.messages.append({"role": "assistant", "content": st.session_state.current_response})
 
         except Exception as e:
-            st.error(f"生成出错: {str(e)}")
-            full_response = "抱歉，我遇到了一点问题，请检查 API 配置或网络连接。"
-
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
+            st.error(f"连接异常: {str(e)}")
