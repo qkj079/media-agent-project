@@ -1,16 +1,9 @@
-# 核心框架
-streamlit
-
-# 讯飞星火相关（必须包含 websocket-client）
+streamlit==1.35.0
 spark-ai-python
-websocket-client
-
-# LangChain 相关（保持版本一致，去掉重复）
+websocket-client==1.8.0
 langchain==0.2.5
 langchain-community==0.2.5
 langchain-core==0.2.9
 langchain-openai==0.1.8
-
-# 其他工具
 tiktoken
 openai==1.35.0
