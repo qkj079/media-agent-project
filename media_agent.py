@@ -11,52 +11,43 @@ from time import mktime
 from urllib.parse import urlencode
 from wsgiref.handlers import format_date_time
 import websocket
+import time
 
-# 配置你的密钥 (建议从环境变量获取，这里为了演示直接写死，或者你自己在代码里填)
-# 注意：如果在Streamlit云端部署，最好用 st.secrets，但为了先跑通，你可以先填在这里
+# === 配置区域 (请替换为你自己的密钥) ===
 APPID = "你的APPID" 
 APIKey = "你的APIKey" 
 APISecret = "你的APISecret" 
+# ======================================
 
 class SparkLiteApi:
     def __init__(self, appid, api_key, api_secret):
         self.appid = appid
         self.api_key = api_key
         self.api_secret = api_secret
-        self.answer = ""
+        self.result = ""
 
-    # 1. 这里是报错缺失的 get_url 函数
-    def get_url(self):
-        host = "spark-api.xf-yun.com"
-        url = "wss://{}/v1.1/chat".format(host)
-        
+    # 1. 生成鉴权 URL (这是之前报错缺失的关键部分)
+    def get_url(self, host, path):
         now = datetime.now()
         date = format_date_time(mktime(now.timetuple()))
         
-        signature_origin = "host: {}\ndate: {}\nGET /v1.1/chat HTTP/1.1".format(host, date)
+        signature_origin = "host: {}\ndate: {}\nGET {} HTTP/1.1".format(host, date, path)
         signature_sha = hmac.new(self.api_secret.encode('utf-8'), signature_origin.encode('utf-8'), digestmod=hashlib.sha256).digest()
-        signature_sha_base64 = base64.b64encode(signature_sha).decode(encoding='utf-8')
+        signature_sha = base64.b64encode(signature_sha).decode(encoding='utf-8')
         
-        authorization_origin = "api_key=\"{}\", algorithm=\"hmac-sha256\", headers=\"host date request-line\", signature=\"{}\"".format(
-            self.api_key, signature_sha_base64)
+        authorization_origin = "api_key=\"%s\", algorithm=\"%s\", headers=\"%s\", signature=\"%s\"" % (
+            self.api_key, "hmac-sha256", "host date request-line", signature_sha)
         authorization = base64.b64encode(authorization_origin.encode('utf-8')).decode(encoding='utf-8')
         
-        v = {"authorization": authorization, "date": date, "host": host}
-        url = url + '?' + urlencode(v)
+        v = {
+            "authorization": authorization,
+            "date": date,
+            "host": host
+        }
+        url = 'wss://' + host + path + '?' + urlencode(v)
         return url
 
-    # 2. 这里是核心对话逻辑
-    def chat(self, prompt):
-        self.answer = ""
-        wsUrl = self.get_url()
-        
-        websocket.enableTrace(False)
-        ws = websocket.WebSocketApp(wsUrl, on_message=self.on_message, on_error=self.on_error, on_close=self.on_close)
-        ws.on_open = self.on_open
-        ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
-        return self.answer
-
-    # --- 以下是 WebSocket 的回调函数，不需要改动 ---
+    # 2. 处理 WebSocket 消息
     def on_message(self, ws, message):
         data = json.loads(message)
         code = data['header']['code']
@@ -64,40 +55,26 @@ class SparkLiteApi:
             print(f'请求错误: {code}, {data}')
             ws.close()
         else:
-            choices = data["payload"]["choices"]
-            status = choices["status"]
-            content = choices["text"][0]["content"]
-            self.answer += content
-            if status == 2:
-                ws.close()
+            choices = data["payload"]["choices"]["text"]
+            for choice in choices:
+                self.result += choice["content"]
 
-    def on_error(self, ws, error):
-        print("### error:", error)
+    # 3. 发起对话的主函数
+    def chat(self, text):
+        self.result = ""
+        wsUrl = self.get_url("spark-api.xf-yun.com", "/v1.1/chat") 
+        
+        websocket.enableTrace(False)
+        ws = websocket.WebSocketApp(wsUrl, on_message=self.on_message)
+        ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+        
+        # 简单的等待机制，实际项目中建议用回调
+        timeout = 10 
+        while not self.result and timeout > 0:
+            time.sleep(0.5)
+            timeout -= 0.5
+            
+        return self.result if self.result else "抱歉，连接超时或无回复。"
 
-    def on_close(self, ws, close_status_code, close_msg):
-        pass
-
-    def on_open(self, ws):
-        gen_params = {
-            "header": {
-                "app_id": self.appid,
-                "uid": "1234"
-            },
-            "parameter": {
-                "chat": {
-                    "domain": "general", # Lite版本通常用 general
-                    "temperature": 0.5,
-                    "max_tokens": 1024
-                }
-            },
-            "payload": {
-                "message": {
-                    "text": [
-                        {"role": "user", "content": "你好"} # 这里只是占位，实际应该传入 prompt
-                    ]
-                }
-            }
-        }
-        # 修正：把传入的 prompt 放进去
-        gen_params["payload"]["message"]["text"] = [{"role": "user", "content": self.current_prompt}]
-        ws.send(json.dumps(gen_params))
+# 实例化对象供外部调用
+agent = SparkLiteApi(APPID, APIKey, APISecret)
