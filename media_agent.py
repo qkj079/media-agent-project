@@ -15,8 +15,8 @@ import websocket
 
 # ================== ⚠️ 核心配置区 (必填) ==================
 APP_ID = "3dd79365"
-API_KEY = "在此处粘贴你的API_KEY"
-API_SECRET = "在此处粘贴你的API_SECRET"
+API_KEY = "cf7b4d3e5fc58a69d2e144ea9875a094"
+API_SECRET = "MTdlYjg5ZTE3YTM2MzI3ZGE2OTFlODZh"
 # =======================================================
 
 # 模型版本配置（根据你的讯飞应用选择）
