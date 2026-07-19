@@ -16,9 +16,9 @@ import websocket  # 确保已安装 websocket-client
 # ==========================================
 # ⚠️ 请在这里填入你的讯飞星火 Key 信息
 # ==========================================
-APP_ID = "你的 APPID"      # 控制台获取
-API_SECRET = "你的 APISecret" # 控制台获取
-API_KEY = "你的 APIKey"     # 控制台获取
+APP_ID = "3dd79365"      # 控制台获取
+API_SECRET = "MTdlYjg5ZTE3YTM2MzI3ZGE2OTFlODZh" # 控制台获取
+API_KEY = "cf7b4d3e5fc58a69d2e144ea9875a094"     # 控制台获取
 # ==========================================
 
 class SparkApi:
