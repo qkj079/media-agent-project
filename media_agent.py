@@ -10,111 +10,70 @@ from datetime import datetime
 from time import mktime
 from urllib.parse import urlencode
 from wsgiref.handlers import format_date_time
-import websocket
-import time
+
+import websocket  # 确保已安装 websocket-client
 
 # ==========================================
-# 🔴 关键修复：强制指定 IP (解决 Name or service not known)
+# ⚠️ 请在这里填入你的讯飞星火 Key 信息
 # ==========================================
-import socket
-original_getaddrinfo = socket.getaddrinfo
-
-def new_getaddrinfo(*args):
-    # 如果请求的是讯飞的域名，直接返回我们指定的 IP，跳过 DNS 解析
-    if args[0] == 'spark-api.xf-yun.com':
-        return [(2, 1, 6, '', ('101.226.179.183', args[1]))] 
-    return original_getaddrinfo(*args)
-
-socket.getaddrinfo = new_getaddrinfo
+APP_ID = "你的 APPID"      # 控制台获取
+API_SECRET = "你的 APISecret" # 控制台获取
+API_KEY = "你的 APIKey"     # 控制台获取
 # ==========================================
 
+class SparkApi:
+    def __init__(self):
+        self.response = "" # 用于存储最终的回复
 
-class SparkLiteApi:
-    def __init__(self, appid, api_key, api_secret):
-        self.appid = appid
-        self.api_key = api_key
-        self.api_secret = api_secret
-        # Lite 版本对应的 URL
-        self.host = "spark-api.xf-yun.com"
-        self.domain = "general" 
-        self.chat_url = f"wss://{self.host}/v1.1/chat"
-
-    # 生成握手需要的鉴权 URL
+    # 生成 URL
     def create_url(self):
+        url = 'wss://spark-api.xf-yun.com/v3.5/chat' # v3.5 是星火 Max 版本，如需其他版本请修改
         now = datetime.now()
         date = format_date_time(mktime(now.timetuple()))
 
-        signature_origin = "host: " + self.host + "\n"
+        signature_origin = "host: spark-api.xf-yun.com\n"
         signature_origin += "date: " + date + "\n"
-        signature_origin += "GET /v1.1/chat HTTP/1.1"
+        signature_origin += "GET /v3.5/chat HTTP/1.1"
 
-        signature_sha = hmac.new(
-            self.api_secret.encode("utf-8"),
-            signature_origin.encode("utf-8"),
-            digestmod=hashlib.sha256,
-        ).digest()
-        signature_sha_base64 = base64.b64encode(signature_sha).decode(encoding="utf-8")
+        signature_sha = hmac.new(API_SECRET.encode('utf-8'), signature_origin.encode('utf-8'), digestmod=hashlib.sha256).digest()
+        signature_sha_base64 = base64.b64encode(signature_sha).decode(encoding='utf-8')
 
-        authorization_origin = f'api_key="{self.api_key}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature_sha_base64}"'
-        authorization = base64.b64encode(authorization_origin.encode("utf-8")).decode(encoding="utf-8")
+        authorization_origin = f'api_key="{API_KEY}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature_sha_base64}"'
+        authorization = base64.b64encode(authorization_origin.encode('utf-8')).decode(encoding='utf-8')
 
-        v = {"authorization": authorization, "date": date, "host": self.host}
-        url = self.chat_url + "?" + urlencode(v)
+        v = {
+            "authorization": authorization,
+            "date": date,
+            "host": "spark-api.xf-yun.com"
+        }
+        url = url + '?' + urlencode(v)
         return url
 
-    # 核心对话函数
-    def chat(self, question):
-        url = self.create_url()
-        wsParam = Ws_Param(url, self.appid, question)
-        
-        # 建立连接
-        websocket.enableTrace(False)
-        wsResult = websocket.WebSocketApp(
-            url,
-            on_message=wsParam.on_message,
-            on_error=wsParam.on_error,
-            on_close=wsParam.on_close,
-            on_open=wsParam.on_open,
-        )
-        wsResult.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
-        
-        return wsResult.answer if hasattr(wsResult, 'answer') else "未收到回复"
-
-
-# WebSocket 参数处理类
-class Ws_Param(object):
-    def __init__(self, url, appid, question):
-        self.url = url
-        self.appid = appid
-        self.question = question
-        self.answer = "" 
-
-    # 收到消息时的处理
+    # WebSocket 收到消息的处理逻辑
     def on_message(self, ws, message):
         data = json.loads(message)
-        code = data["header"]["code"]
+        code = data['header']['code']
         if code != 0:
-            print(f"错误代码 {code}: {data['header']['message']}")
+            print(f'请求错误: {code}, {data}')
             ws.close()
         else:
             choices = data["payload"]["choices"]
             status = choices["status"]
             content = choices["text"][0]["content"]
-            self.answer += content 
+            self.response += content # 拼接回答
             
-            # 如果回答结束（status=2），关闭连接
-            if status == 2:
+            if status == 2: # 结束标志
                 ws.close()
 
-    # 发生错误时的处理
+    # WebSocket 发生错误的处理
     def on_error(self, ws, error):
         print("### error:", error)
 
-    # 连接关闭时的处理
+    # WebSocket 关闭的处理
     def on_close(self, ws, close_status_code, close_msg):
-        pass
+        pass 
 
-    # 连接建立时的处理（发送问题）
+    # WebSocket 建立连接后的处理
     def on_open(self, ws):
         thread.start_new_thread(self.run, (ws,))
 
@@ -122,21 +81,42 @@ class Ws_Param(object):
         data = json.dumps(self.gen_params())
         ws.send(data)
 
-    # 构造发送给讯飞的数据包
+    # 构造请求参数
     def gen_params(self):
         data = {
-            "header": {"app_id": self.appid, "uid": "1234"},
+            "header": {
+                "app_id": APP_ID,
+                "uid": "1234"
+            },
             "parameter": {
                 "chat": {
-                    "domain": "general", # Lite 版本固定为 general
+                    "domain": "generalv3.5", # 对应 v3.5 接口
                     "temperature": 0.5,
-                    "max_tokens": 2048,
+                    "max_tokens": 2048
                 }
             },
             "payload": {
                 "message": {
-                    "text": [{"role": "user", "content": self.question}]
+                    "text": [
+                        {"role": "user", "content": self.question} # 使用实例变量 self.question
+                    ]
                 }
-            },
+            }
         }
         return data
+
+    # 对外暴露的调用方法
+    def chat(self, question):
+        self.response = "" # 清空上一次回答
+        self.question = question # 保存当前问题
+        
+        wsUrl = self.create_url()
+        websocket.enableTrace(False)
+        ws = websocket.WebSocketApp(wsUrl, 
+                                    on_message=self.on_message, 
+                                    on_error=self.on_error, 
+                                    on_close=self.on_close, 
+                                    on_open=self.on_open)
+        ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+        
+        return self.response
